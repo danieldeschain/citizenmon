@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"fyne.io/fyne/v2"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -62,7 +63,24 @@ func WatchLogFile(path string, proc LogHandler) {
 	// Seek to end for new data
 	offset, _ := file.Seek(0, io.SeekCurrent)
 
-	// Event loop
+	// Polling goroutine to check for new data every 1 second
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+			info, err := file.Stat()
+			if err == nil && info.Size() > offset {
+				file.Seek(offset, io.SeekStart)
+				scanner2 := bufio.NewScanner(file)
+				scanner2.Buffer(buf, 10*1024*1024)
+				for scanner2.Scan() {
+					line := scanner2.Text()
+					fyne.Do(func() { proc.DetectPlayerName(line); proc.ProcessLogLine(line) })
+				}
+				offset, _ = file.Seek(0, io.SeekCurrent)
+			}
+		}
+	}()
+
 	for {
 		select {
 		case ev := <-w.Events:
@@ -79,7 +97,6 @@ func WatchLogFile(path string, proc LogHandler) {
 
 				file, err = os.Open(absPath)
 				if err != nil {
-					proc.AppendOutput("failed to reopen log file: " + err.Error())
 					continue
 				}
 				offset = 0
@@ -93,7 +110,6 @@ func WatchLogFile(path string, proc LogHandler) {
 				// Check for truncation or file stat error
 				info, statErr := file.Stat()
 				if statErr != nil {
-					proc.AppendOutput("stat error: " + statErr.Error())
 					continue
 				}
 				if info.Size() < offset {
@@ -104,18 +120,16 @@ func WatchLogFile(path string, proc LogHandler) {
 				file.Seek(offset, io.SeekStart)
 				scanner2 := bufio.NewScanner(file)
 				scanner2.Buffer(buf, 10*1024*1024)
-				// BEGIN PATCH: echo raw and process
 				for scanner2.Scan() {
 					line := scanner2.Text()
-					proc.DetectPlayerName(line)
-					proc.ProcessLogLine(line)
+					fyne.Do(func() { proc.DetectPlayerName(line); proc.ProcessLogLine(line) })
 				}
-				// END PATCH
 				offset, _ = file.Seek(0, io.SeekCurrent)
 			}
 
-		case err := <-w.Errors:
-			proc.AppendOutput("watcher error: " + err.Error())
+		case <-w.Errors:
+			// Optionally handle watcher errors
+			// (no-op)
 		}
 	}
 }

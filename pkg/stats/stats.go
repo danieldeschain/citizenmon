@@ -3,6 +3,7 @@ package stats
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 )
 
 // Stats holds tracked player interactions.
@@ -23,12 +24,19 @@ func New() Stats {
 	}
 }
 
-// Load reads stats from <player>_stats.json, or returns empty on error.
+// getStatsDir returns the directory for saving stats files (same as feeds)
+func getStatsDir() string {
+	dir := filepath.Join(os.Getenv("APPDATA"), "citizenmon", "feeds")
+	os.MkdirAll(dir, 0755)
+	return dir
+}
+
+// Load reads stats from <player>_stats.json in the stats dir, or returns empty on error.
 func Load(player string) Stats {
 	if player == "" {
 		return New()
 	}
-	fname := player + "_stats.json"
+	fname := filepath.Join(getStatsDir(), player+"_stats.json")
 	f, err := os.Open(fname)
 	if err != nil {
 		return New()
@@ -41,12 +49,12 @@ func Load(player string) Stats {
 	return s
 }
 
-// Save writes stats to <player>_stats.json.
+// Save writes stats to <player>_stats.json in the stats dir.
 func Save(player string, s Stats) error {
 	if player == "" {
 		return nil
 	}
-	fname := player + "_stats.json"
+	fname := filepath.Join(getStatsDir(), player+"_stats.json")
 	f, err := os.Create(fname)
 	if err != nil {
 		return err

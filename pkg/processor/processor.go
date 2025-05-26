@@ -76,6 +76,7 @@ func (p *Processor) DetectPlayerName(line string) {
 // ProcessLogLine updates stats based on a single log line.
 func (p *Processor) ProcessLogLine(line string) {
 	if p.PlayerName == "" {
+		p.AppendOutput("PlayerName is empty, skipping stats update for line: " + line)
 		return
 	}
 
