@@ -5,11 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
-	"github.com/fsnotify/fsnotify"
 )
 
 // LogHandler defines the interface the watcher uses to feed log lines.
@@ -19,7 +17,7 @@ type LogHandler interface {
 	AppendOutput(line string)
 }
 
-// WatchLogFile tails the game log at the given path using fsnotify.
+// WatchLogFile tails the game log at the given path using polling.
 func WatchLogFile(path string, proc LogHandler) {
 	// Normalize and clean the path
 	absPath, err := filepath.Abs(path)
@@ -28,21 +26,6 @@ func WatchLogFile(path string, proc LogHandler) {
 		return
 	}
 	absPath = filepath.Clean(absPath)
-
-	// Create watcher
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		proc.AppendOutput("failed to create watcher: " + err.Error())
-		return
-	}
-	defer w.Close()
-
-	// Watch the directory
-	dir := filepath.Dir(absPath)
-	if err := w.Add(dir); err != nil {
-		proc.AppendOutput("failed to watch directory: " + err.Error())
-		return
-	}
 
 	// Open the log file
 	file, err := os.Open(absPath)
@@ -58,78 +41,48 @@ func WatchLogFile(path string, proc LogHandler) {
 	scanner.Buffer(buf, 10*1024*1024)
 	for scanner.Scan() {
 		proc.DetectPlayerName(scanner.Text())
-	}
-
-	// Seek to end for new data
+	}	// Seek to end for new data
 	offset, _ := file.Seek(0, io.SeekCurrent)
 
-	// Polling goroutine to check for new data every 1 second
-	go func() {
-		for {
-			time.Sleep(1 * time.Second)
-			info, err := file.Stat()
-			if err == nil && info.Size() > offset {
-				file.Seek(offset, io.SeekStart)
-				scanner2 := bufio.NewScanner(file)
-				scanner2.Buffer(buf, 10*1024*1024)
-				for scanner2.Scan() {
-					line := scanner2.Text()
-					fyne.Do(func() { proc.DetectPlayerName(line); proc.ProcessLogLine(line) })
-				}
-				offset, _ = file.Seek(0, io.SeekCurrent)
-			}
-		}
-	}()
+	// Poll for changes every 500ms (half second)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 
-	for {
-		select {
-		case ev := <-w.Events:
-			// Only proceed if the event is for our file
-			evClean := filepath.Clean(ev.Name)
-			if !strings.EqualFold(evClean, absPath) {
+	for range ticker.C {
+		// Check file stat
+		info, err := os.Stat(absPath)
+		if err != nil {
+			// File might have been moved/deleted, try to reopen
+			file.Close()
+			time.Sleep(100 * time.Millisecond)
+			
+			file, err = os.Open(absPath)
+			if err != nil {
 				continue
 			}
+			offset = 0
+			continue
+		}
 
-			// Handle rotation or removal
-			if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-				file.Close()
-				time.Sleep(100 * time.Millisecond)
+		// Check for truncation
+		if info.Size() < offset {
+			offset = 0
+		}
 
-				file, err = os.Open(absPath)
-				if err != nil {
-					continue
-				}
-				offset = 0
+		// Check if file has new content
+		if info.Size() > offset {
+			// Read new lines with large buffer
+			file.Seek(offset, io.SeekStart)
+			scanner2 := bufio.NewScanner(file)
+			scanner2.Buffer(buf, 10*1024*1024)
+			for scanner2.Scan() {
+				line := scanner2.Text()
+				fyne.Do(func() { 
+					proc.DetectPlayerName(line)
+					proc.ProcessLogLine(line) 
+				})
 			}
-
-			// Handle writes or creations
-			if ev.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				// Wait briefly for writes to flush
-				time.Sleep(50 * time.Millisecond)
-
-				// Check for truncation or file stat error
-				info, statErr := file.Stat()
-				if statErr != nil {
-					continue
-				}
-				if info.Size() < offset {
-					offset = 0
-				}
-
-				// Read new lines with large buffer
-				file.Seek(offset, io.SeekStart)
-				scanner2 := bufio.NewScanner(file)
-				scanner2.Buffer(buf, 10*1024*1024)
-				for scanner2.Scan() {
-					line := scanner2.Text()
-					fyne.Do(func() { proc.DetectPlayerName(line); proc.ProcessLogLine(line) })
-				}
-				offset, _ = file.Seek(0, io.SeekCurrent)
-			}
-
-		case <-w.Errors:
-			// Optionally handle watcher errors
-			// (no-op)
+			offset, _ = file.Seek(0, io.SeekCurrent)
 		}
 	}
 }

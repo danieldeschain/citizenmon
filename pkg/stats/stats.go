@@ -14,6 +14,9 @@ type Stats struct {
 	Appearances map[string]int `json:"appearances"`
 }
 
+// Global current session stats (resets when app restarts)
+var currentSessionStats = make(map[string]Stats)
+
 // New initializes an empty Stats.
 func New() Stats {
 	return Stats{
@@ -22,6 +25,30 @@ func New() Stats {
 		Incaps:      make(map[string]int),
 		Appearances: make(map[string]int),
 	}
+}
+
+// ResetCurrentSession clears the current session stats for all players
+func ResetCurrentSession() {
+	currentSessionStats = make(map[string]Stats)
+}
+
+// GetCurrentSession returns the current session stats for a player
+func GetCurrentSession(player string) Stats {
+	if player == "" {
+		return New()
+	}
+	if stats, exists := currentSessionStats[player]; exists {
+		return stats
+	}
+	return New()
+}
+
+// UpdateCurrentSession updates the current session stats for a player
+func UpdateCurrentSession(player string, allTimeStats Stats) {
+	if player == "" {
+		return
+	}
+	currentSessionStats[player] = allTimeStats
 }
 
 // getStatsDir returns the directory for saving stats files (same as feeds)
@@ -61,4 +88,13 @@ func Save(player string, s Stats) error {
 	}
 	defer f.Close()
 	return json.NewEncoder(f).Encode(s)
+}
+
+// ResetAllTime resets all-time stats for a player (saves empty stats to file)
+func ResetAllTime(player string) error {
+	if player == "" {
+		return nil
+	}
+	emptyStats := New()
+	return Save(player, emptyStats)
 }
